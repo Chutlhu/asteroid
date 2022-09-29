@@ -1,7 +1,7 @@
 import torch
 from asteroid_filterbanks import make_enc_dec
 from ..masknn import TDConvNet
-from .base_models import BaseEncoderMaskerDecoder
+from .base_models import BaseEncoderMaskerDecoder, jitable_shape, _shape_reconstructed, pad_x_to_y, _unsqueeze_to_3d
 import warnings
 
 
@@ -106,9 +106,42 @@ class ConvTasNet(BaseEncoderMaskerDecoder):
             mask_act=mask_act,
             causal=causal,
         )
+
         super().__init__(encoder, masker, decoder, encoder_activation=encoder_activation)
 
 
 class VADNet(ConvTasNet):
     def forward_decoder(self, masked_tf_rep: torch.Tensor) -> torch.Tensor:
         return torch.nn.functional.sigmoid(self.decoder(masked_tf_rep))
+
+
+class GPTasNet(ConvTasNet):
+    
+    def forward(self, wav):
+        """Enc/Mask/Dec model forward
+
+        Args:
+            wav (torch.Tensor): waveform tensor. 1D, 2D or 3D tensor, time last.
+
+        Returns:
+            torch.Tensor, of shape (batch, n_src, time) or (n_src, time).
+        """
+        # Remember shape to shape reconstruction, cast to Tensor for torchscript
+        shape = jitable_shape(wav)
+        # Reshape to (batch, n_mix, time)
+        wav = _unsqueeze_to_3d(wav)
+
+        # Real forward
+        tf_rep = self.forward_encoder(wav)
+        # est_masks = self.forward_masker(tf_rep)
+        # masked_tf_rep = self.apply_masks(tf_rep, est_masks)
+        # decoded = self.forward_decoder(masked_tf_rep)
+
+        # reconstructed = pad_x_to_y(decoded, wav)
+
+        print(wav.shape)
+        print(tf_rep.shape)
+        est_masks = self.forward_masker(tf_rep)
+        print(est_masks.shape)
+        1/0
+        return _shape_reconstructed(reconstructed, shape)

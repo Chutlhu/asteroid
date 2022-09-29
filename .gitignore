@@ -117,3 +117,9 @@ venv.bak/
 /.idea/dictionaries/mparient.xml
 /.idea/inspectionProfiles/profiles_settings.xml
 /.idea/vcs.xml
+
+
+*.wav
+egs/wham/ConvTasNetGP/data/
+egs/tools/
+pytorch-receptive-field
