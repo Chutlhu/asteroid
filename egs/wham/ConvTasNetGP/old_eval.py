@@ -9,7 +9,6 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 from pprint import pprint
-import librosa as lb
 
 from asteroid.metrics import get_metrics
 from asteroid.losses import PITLossWrapper, PairwiseLogDetDiv, pairwise_neg_sisdr
@@ -71,35 +70,8 @@ def main(conf):
     series_list = []
     torch.no_grad().__enter__()
     for idx in tqdm(range(len(test_set))):
-        
-        # get utt from wham data loader
+        # Forward the network on the mixture.
         mix, sources = tensors_to_device(test_set[idx], device=model_device)
-        print(mix.shape)
-        
-        _mix = mix.detach().gpu().numpy()
-        frame_length = conf['train_conf']['data']['segment_duration'] * 8000
-        frames = lb.util.frame(_mix, frame_length=frame_length, hop_length=frame_length//2) # Frame Size x N Frames
-        F, N = frames.shape
-        frames = tensors_to_device(frames, device=model_device)
-        est_frames = torch.zeros_like(frames)
-        est_frames = torch.concat((est_frames, est_frames), dim=1)
-        
-        B = 12 # batch size
-        for i, j in range(0, N, B):
-            # Forward the network on the mixture.
-            est_sources[i:i+B] = model(frames[i:i+B,:])
-        
-        # windowing
-        win = torch.hann_window(frame_length, periodic=True, device=model_device)
-        est_sources = est_sources * win[None,None,:]
-        
-        
-        for i in range(N-1):
-            continue
-        1/0
-        
-        
-        
         est_sources = model(mix[None, None])
         
         # loss, reordered_sources = loss_func(est_sources, sources[None], return_est=True)

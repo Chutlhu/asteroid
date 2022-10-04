@@ -10,8 +10,8 @@ wav_dir=tmp
 
 echo "Download sph2pipe_v2.5 into egs/tools"
 mkdir -p ../../tools
-# wget http://www.openslr.org/resources/3/sph2pipe_v2.5.tar.gz -P ../../tools
-# cd ../../tools && tar -xzvf sph2pipe_v2.5.tar.gz && gcc -o sph2pipe_v2.5/sph2pipe sph2pipe_v2.5/*.c -lm && cd -
+wget http://www.openslr.org/resources/3/sph2pipe_v2.5.tar.gz -P ../../tools
+cd ../../tools && tar -xzvf sph2pipe_v2.5.tar.gz && gcc -o sph2pipe_v2.5/sph2pipe sph2pipe_v2.5/*.c -lm && cd -
 
 echo "Convert sphere format to wav format"
 sph2pipe=../../tools/sph2pipe_v2.5/sph2pipe

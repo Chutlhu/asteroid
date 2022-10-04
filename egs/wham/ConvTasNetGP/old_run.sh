@@ -27,27 +27,25 @@ python_path=python
 stage=3  # Controls from which stage to start
 tag=""  # Controls the directory name associated to the experiment
 # You can ask for several GPUs using id (passed to CUDA_VISIBLE_DEVICES)
-id=
+id=0
 
 # Data
-task=sep_noise  # Specify the task here (sep_clean, sep_noisy, enh_single, enh_both)
+task=enh_single  # Specify the task here (sep_clean, sep_noisy, enh_single, enh_both)
 sample_rate=8000
-mode=min200
+mode=min
 nondefault_src=  # If you want to train a network with 3 output streams for example.
 
 # Training
-batch_size=1
+batch_size=8
 num_workers=8
 #optimizer=adam
 lr=0.001
 epochs=200
 
 # Architecture
-model_name=GPTasNet
-model=gptasnet
 n_blocks=8
 n_repeats=3
-mask_nonlinear=tanh
+mask_nonlinear=relu
 
 # Evaluation
 eval_use_gpu=1
@@ -92,14 +90,14 @@ uuid=$($python_path -c 'import uuid, sys; print(str(uuid.uuid4())[:8])')
 if [[ -z ${tag} ]]; then
 	tag=${task}_${sr_string}k${mode}_${uuid}
 fi
-expdir=exp/train_${model}_${tag}
+expdir=exp/train_convtasnet_${tag}
 mkdir -p $expdir && echo $uuid >> $expdir/run_uuid.txt
 echo "Results from the following experiment will be stored in $expdir"
 
 if [[ $stage -le 3 ]]; then
   echo "Stage 3: Training"
   mkdir -p logs
-  CUDA_VISIBLE_DEVICES=$id $python_path train_gp.py \
+  CUDA_VISIBLE_DEVICES=$id $python_path train.py \
 		--train_dir $train_dir \
 		--valid_dir $valid_dir \
 		--task $task \
@@ -116,7 +114,7 @@ if [[ $stage -le 3 ]]; then
 
 	# Get ready to publish
 	mkdir -p $expdir/publish_dir
-	echo "wham/${model_name}" > $expdir/publish_dir/recipe_name.txt
+	echo "wham/ConvTasNet" > $expdir/publish_dir/recipe_name.txt
 fi
 
 if [[ $stage -le 4 ]]; then

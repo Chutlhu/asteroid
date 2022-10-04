@@ -1,9 +1,13 @@
+from turtle import forward
 import torch
+import torch.nn as nn
 from asteroid_filterbanks import make_enc_dec
 from ..masknn import TDConvNet
+from asteroid.masknn.convolutional import GPTDConvNet
 from .base_models import BaseEncoderMaskerDecoder, jitable_shape, _shape_reconstructed, pad_x_to_y, _unsqueeze_to_3d
 import warnings
 
+import matplotlib.pyplot as plt
 
 class ConvTasNet(BaseEncoderMaskerDecoder):
     """ConvTasNet separation model, as described in [1].
@@ -92,7 +96,7 @@ class ConvTasNet(BaseEncoderMaskerDecoder):
                 f"must be used. Changing {norm_type} to cLN"
             )
         # Update in_chan
-        masker = TDConvNet(
+        masker = GPTDConvNet(
             n_feats,
             n_src,
             out_chan=out_chan,
@@ -113,9 +117,53 @@ class ConvTasNet(BaseEncoderMaskerDecoder):
 class VADNet(ConvTasNet):
     def forward_decoder(self, masked_tf_rep: torch.Tensor) -> torch.Tensor:
         return torch.nn.functional.sigmoid(self.decoder(masked_tf_rep))
+    
+def LinearTanh(n_in, n_out):
+    block = nn.Sequential(
+      nn.Linear(n_in, n_out),
+      nn.Tanh()
+    )
+    return block
+    
+def LinearPReLu(n_in, n_out):
+    block = nn.Sequential(
+      nn.Linear(n_in, n_out),
+      nn.PReLU()
+    )
+    return block
+    
+class DeepKernel(nn.Module):
+    
+    def __init__(self, dim_layers=[]):
+        super().__init__()
+        
+        num_layers = len(dim_layers)
+        
+        blocks = []
+        for l in range(num_layers-2):
+            blocks.append(LinearPReLu(dim_layers[l], dim_layers[l+1]))
+            
+        blocks.append(
+            nn.Sequential(
+                nn.Linear(dim_layers[-2], dim_layers[-1]),
+                nn.PReLU()
+            )
+        )
+        
+        self.mlp = nn.Sequential(*blocks)
+        
+    def forward(self, x):
+        return self.mlp(x)
 
 
 class GPTasNet(ConvTasNet):
+    
+    def __init__(self, n_src, out_chan=None, n_blocks=8, n_repeats=3, bn_chan=128, hid_chan=512, skip_chan=128, conv_kernel_size=3, norm_type="gLN", mask_act="sigmoid", in_chan=None, causal=False, fb_name="free", kernel_size=16, n_filters=512, stride=8, encoder_activation=None, sample_rate=8000, **fb_kwargs):
+        super().__init__(n_src, out_chan, n_blocks, n_repeats, bn_chan, hid_chan, skip_chan, conv_kernel_size, norm_type, mask_act, in_chan, causal, fb_name, kernel_size, n_filters, stride, encoder_activation, sample_rate, **fb_kwargs)
+        
+        self.deep_kernel = DeepKernel([256] + [128] + [64])
+        self.weight_c1 = torch.nn.Parameter(0.25*torch.ones(1))
+        self.weight_c2 = torch.nn.Parameter(0.25*torch.ones(1))
     
     def forward(self, wav):
         """Enc/Mask/Dec model forward
@@ -133,15 +181,57 @@ class GPTasNet(ConvTasNet):
 
         # Real forward
         tf_rep = self.forward_encoder(wav)
+        est_masks = self.forward_masker(tf_rep)
+        
+
+        # print()
+        # print(wav.shape)
+        # print('TF repr:', tf_rep.shape)
+        # print('Mask   :', est_masks.shape)
+        # 1/0
+    
+        # Original ConvTasNet
         # est_masks = self.forward_masker(tf_rep)
         # masked_tf_rep = self.apply_masks(tf_rep, est_masks)
         # decoded = self.forward_decoder(masked_tf_rep)
-
         # reconstructed = pad_x_to_y(decoded, wav)
-
-        print(wav.shape)
-        print(tf_rep.shape)
-        est_masks = self.forward_masker(tf_rep)
-        print(est_masks.shape)
-        1/0
-        return _shape_reconstructed(reconstructed, shape)
+        # return _shape_reconstructed(reconstructed, shape)
+        
+        # Feed the mask to the kernel function:
+        z1, z2 = est_masks.split(1, dim=1)
+        
+        phi_z1 = self.deep_kernel(z1.permute(0,1,3,2)) # BxCxFxT -> BxCxTxF
+        phi_z2 = self.deep_kernel(z2.permute(0,1,3,2)) # BxCxFxT -> BxCxTxF
+        # phi_z1 = z1.permute(0,1,3,2)
+        # phi_z2 = z2.permute(0,1,3,2)
+        
+        # print(phi_z1)
+        # print(phi_z2)
+        
+        # C1 = torch.diag_embed(torch.sum(phi_z1**2, dim=-1))
+        # C2 = torch.diag_embed(torch.sum(phi_z2**2, dim=-1))
+        
+        
+        # C1exp = torch.norm(phi_z1[..., None, :, :] - phi_z1[..., :, None, :], dim=-1)**2
+        # C2exp = torch.norm(phi_z2[..., None, :, :] - phi_z2[..., :, None, :], dim=-1)**2
+        # print(C1exp.shape)
+        
+        C1 = torch.einsum('...if,...jf->...ij',phi_z1,phi_z1)
+        C2 = torch.einsum('...if,...jf->...ij',phi_z2,phi_z2)
+        # C1 = C1 + self.weight_c1*torch.exp(C1exp)
+        # C2 = C2 + self.weight_c2*torch.exp(C2exp)
+        
+        cov_est_targets = torch.concat([C1, C2], dim=1)
+        
+        # inv_sum_cov_est_targets = torch.linalg.inv(cov_est_targets.sum(dim=1, keepdim=True))
+        # filters = torch.einsum('...ij,...jk->...ik', cov_est_targets, inv_sum_cov_est_targets)
+        
+        # padding_to_remove = 33 // 2 
+        # _wav = wav[..., padding_to_remove:-padding_to_remove]
+        # estimates = torch.einsum('...ij,...j->...i', filters, _wav)
+        
+        # estimates = torch.concat((torch.zeros_like(estimates[:,:,:padding_to_remove]), 
+        #                           estimates, 
+        #                           torch.zeros_like(estimates[:,:,-padding_to_remove:])), dim=-1)
+        
+        return (cov_est_targets, ((z1, z2), (phi_z1, phi_z2)))

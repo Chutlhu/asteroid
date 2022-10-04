@@ -11,7 +11,8 @@ from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
 from asteroid.data.wham_dataset import WhamDataset
 from asteroid.engine.optimizers import make_optimizer
 from asteroid.engine.system import System
-from asteroid.losses import PITLossWrapper, pairwise_neg_sisdr
+from asteroid.losses import PITLossWrapper, PairwiseLogDetDiv, pairwise_neg_sisdr
+from asteroid.losses.gploss import GPLoss
 from asteroid.models import ConvTasNet
 from asteroid.models.conv_tasnet import GPTasNet
 
@@ -32,6 +33,7 @@ def main(conf):
         sample_rate=conf["data"]["sample_rate"],
         segment=conf["data"]["segment_duration"],
         nondefault_nsrc=conf["data"]["nondefault_nsrc"],
+        normalize_audio=conf["data"]["normalize_audio"],
     )
     val_set = WhamDataset(
         conf["data"]["valid_dir"],
@@ -39,6 +41,7 @@ def main(conf):
         sample_rate=conf["data"]["sample_rate"],
         segment=conf["data"]["segment_duration"],
         nondefault_nsrc=conf["data"]["nondefault_nsrc"],
+        normalize_audio=conf["data"]["normalize_audio"],
     )
 
     train_loader = DataLoader(
@@ -60,7 +63,7 @@ def main(conf):
 
     # Define model and optimizer
     model = GPTasNet(
-        **conf["filterbank"], **conf["masknet"], sample_rate=conf["data"]["sample_rate"]
+        **conf["filterbank"], **conf["masknet"], sample_rate=conf["data"]["sample_rate"],
     )
     optimizer = make_optimizer(model.parameters(), **conf["optim"])
     # Define scheduler
@@ -75,7 +78,13 @@ def main(conf):
         yaml.safe_dump(conf, outfile)
 
     # Define Loss function.
-    loss_func = PITLossWrapper(pairwise_neg_sisdr, pit_from="pw_mtx")
+    # loss_func = PITLossWrapper(pairwise_neg_sisdr, pit_from="pw_mtx")
+    loss_func = PITLossWrapper(
+        PairwiseLogDetDiv(
+            inv_est=True, exp_dir=conf["main_args"]["exp_dir"],
+            padding_to_remove=conf["filterbank"]["kernel_size"]),
+        pit_from="pw_mtx")
+   
     system = System(
         model=model,
         loss_func=loss_func,

@@ -1,7 +1,6 @@
 import torch
 from torch.nn.modules.loss import _Loss
 
-
 class PairwiseNegSDR(_Loss):
     r"""Base class for pairwise negative SI-SDR, SD-SDR and SNR on a batch.
 
