@@ -10,14 +10,20 @@ masknet:
   mask_act: tanh
   bn_chan: 128
   skip_chan: 128
-  hid_chan: 512
+  hid_chan: 256
+kernelnet:
+  k_n_layers: 3
+  k_hid_size: 128
+  k_out_size: 32
 # Training config
 training:
   epochs: 200
   batch_size: 12
-  num_workers: 4
+  num_workers: 8
   half_lr: yes
-  early_stop: yes
+  early_stop: no
+  train_limit: 0.01
+  val_limit: 0.01
 # Optim config
 optim:
   optimizer: adam
@@ -30,6 +36,6 @@ data:
   task: sep_noise
   nondefault_nsrc:
   sample_rate: 8000
-  mode: min200
+  mode: min
   segment_duration: 0.256
   normalize_audio: True

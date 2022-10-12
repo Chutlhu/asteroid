@@ -10,15 +10,18 @@ import pandas as pd
 from tqdm import tqdm
 from pprint import pprint
 import librosa as lb
+from pathlib import Path
 
 from asteroid.metrics import get_metrics
-from asteroid.losses import PITLossWrapper, PairwiseLogDetDiv, pairwise_neg_sisdr
-from asteroid.data.wham_dataset import WhamDataset
+from asteroid.losses import PITLossWrapper, PairwiseLogDetDiv, PairwiseNegSDR
+from asteroid.data.wham_dataset import WhamDataset, normalize_tensor_wav
 from asteroid.models import ConvTasNet
 from asteroid.models.conv_tasnet import GPTasNet
 from asteroid.utils import tensors_to_device
 from asteroid.models import save_publishable
 
+import matplotlib.pyplot as plt 
+import soundfile as sf
 
 parser = argparse.ArgumentParser()
 parser.add_argument(
@@ -42,8 +45,8 @@ compute_metrics = ["si_sdr", "sdr", "sir", "sar", "stoi"]
 
 
 def main(conf):
-    model_path = os.path.join(conf["exp_dir"], "best_model.pth")
-    model = GPTasNet.from_pretrained(model_path)
+    model_path = os.path.join(conf["exp_dir"], "best_model.pth")    
+    model = GPTasNet.from_pretrained(model_path, **conf['train_conf']['kernelnet'])
     # Handle device placement
     if conf["use_gpu"]:
         model.cuda()
@@ -53,7 +56,7 @@ def main(conf):
         conf["task"],
         sample_rate=conf["sample_rate"],
         nondefault_nsrc=model.masker.n_src,
-        segment=conf["train_conf"]["data"]["segment_duration"],
+        segment=None,
     )  # Uses all segment length
     # Used to reorder sources only
     # loss_func = PITLossWrapper(pairwise_neg_sisdr, pit_from="pw_mtx")
@@ -62,6 +65,8 @@ def main(conf):
             inv_est=True, exp_dir=conf["exp_dir"],
             padding_to_remove=conf["filterbank"]["kernel_size"]),
         pit_from="pw_mtx")
+    hlfpadd = loss_func.loss_func.half_padding_to_remove
+    EPS = loss_func.loss_func.EPS
 
     # Randomly choose the indexes of sentences to save.
     ex_save_dir = os.path.join(conf["exp_dir"], "examples/")
@@ -70,50 +75,120 @@ def main(conf):
     save_idx = random.sample(range(len(test_set)), conf["n_save_ex"])
     series_list = []
     torch.no_grad().__enter__()
+    
+    # set for evaluation
+    loss_func.training = False
+    
     for idx in tqdm(range(len(test_set))):
         
         # get utt from wham data loader
+        # mix is L
+        # src is K x L
         mix, sources = tensors_to_device(test_set[idx], device=model_device)
-        print(mix.shape)
+        print('Mix shape', mix.shape)
         
-        _mix = mix.detach().gpu().numpy()
-        frame_length = conf['train_conf']['data']['segment_duration'] * 8000
-        frames = lb.util.frame(_mix, frame_length=frame_length, hop_length=frame_length//2) # Frame Size x N Frames
-        F, N = frames.shape
-        frames = tensors_to_device(frames, device=model_device)
-        est_frames = torch.zeros_like(frames)
-        est_frames = torch.concat((est_frames, est_frames), dim=1)
+        frame_length = int(conf['train_conf']['data']['segment_duration'] * conf['train_conf']['data']['sample_rate'])
+        hop_length = frame_length//2
         
-        B = 12 # batch size
-        for i, j in range(0, N, B):
+        ''' Pad the sources to avoit window artifacts '''
+        pad = frame_length//2
+        L = mix.shape[0]
+        padded_mix = torch.concat([torch.zeros(pad).to(model_device), mix, torch.zeros(4*pad).to(model_device)])
+        K, L = sources.shape
+        
+        padded_src = torch.concat([torch.zeros(K,pad).to(model_device), sources, torch.zeros(K, 4*pad).to(model_device)], dim=-1    )
+        
+        ''' Framing the mixture '''
+        _mix = padded_mix.detach().cpu().numpy()
+        mix_frames = lb.util.frame(_mix, frame_length=frame_length, hop_length=hop_length).T # N frames x Len frames
+        N, T = mix_frames.shape
+        mix_frames = torch.Tensor(mix_frames.copy()).to(model_device)
+        print('Mix Frame shape:', mix_frames.shape)
+        
+        ''' Framing the sources '''
+        print('Src shape', sources.shape)
+        _src = padded_src.detach().cpu().numpy()
+        src_frames = lb.util.frame(_src, frame_length=frame_length, hop_length=hop_length).T # N frames x Len frames x K
+        src_frames = torch.Tensor(src_frames.copy()).to(model_device).permute(0,2,1) # NxTxK -> NxKxT
+        print('Src Frame shape:', src_frames.shape) # Nframes x Ksources x T
+        
+        # check dimension
+        try:
+            assert mix_frames.shape == src_frames[:,0,:].shape
+        except:
+            print(mix_frames.shape)
+            print(src_frames.shape)
+            raise ValueError('Src and Mix different size')
+        
+        est_src_frames = torch.zeros_like(src_frames)
+        
+        ''' Estimate frames and reconstruct the wav file '''
+        eye = None
+        B = min(50, N) # arg_dic['train_conf']['training']['batch_size']
+        for i in range(0, N, B):
+            
+            _mixture = mix_frames[i:i+B,:].clone()
+            _targets = src_frames[i:i+B,:,:].clone()
+            
+            # Normalize the mixture only
+            # the targets will preserve the original std
+            m_std = _mixture.std(-1, keepdim=True)
+            _mixture = normalize_tensor_wav(_mixture, eps=EPS, std=m_std)
+            
             # Forward the network on the mixture.
-            est_sources[i:i+B] = model(frames[i:i+B,:])
+            _est_cov, _, _ = model(_mixture)
+            
+            # Compute the filters
+            _est_filters = torch.linalg.solve(
+                    _est_cov.sum(dim=1, keepdim=True).transpose(-2, -1),
+                    _est_cov.transpose(-2, -1)
+                ).transpose(-2, -1)
+            
+            # Separation
+            __mixture = _mixture[..., None, hlfpadd:-hlfpadd]
+            _est_sources_frames = torch.einsum('...ij,...j->...i', _est_filters, __mixture)
+            
+            # Resolve permutation
+            _compute_sdr = PairwiseNegSDR("sisdr")
+            _negsdrs = _compute_sdr(_est_sources_frames, _targets[..., hlfpadd:-hlfpadd])
+            _pitlosswrapper = PITLossWrapper(_compute_sdr)
+            _min_loss, _batch_indices = _pitlosswrapper.find_best_perm(_negsdrs)
+            est_src_frames[i:i+B,:,hlfpadd:-hlfpadd] = _pitlosswrapper.reorder_source(_est_sources_frames, _batch_indices)       
         
         # windowing
         win = torch.hann_window(frame_length, periodic=True, device=model_device)
-        est_sources = est_sources * win[None,None,:]
+        est_src_frames = est_src_frames * win[None,None,:]
         
+        est_sources = torch.zeros_like(padded_src) # Ksourcs x Nsamples
         
-        for i in range(N-1):
-            continue
-        1/0
+        for n in range(N):
+            # print(hop*n, hop*n+T)
+            est_sources[:,hop_length*n:hop_length*n+T] += est_src_frames[n,:,:]
         
+        # if idx // 100 == 0:
+        #     plt.figure(figsize=(12,6))
+        #     plt.subplot(211)
+        #     plt.title(f"Sample{idx} - source:0")
+        #     plt.plot(_sources[0,:], label='True')
+        #     plt.plot(_est_sources[0,:], label='Est')
+        #     plt.subplot(212)
+        #     plt.title(f"Sample{idx} - source:1")
+        #     plt.plot(_sources[1,:], label='True')
+        #     plt.plot(_est_sources[1,:], label='Est')
+        #     plt.savefig(os.path.join(conf["exp_dir"], "dummy_reconstruction.png"))
+        #     plt.close()
         
+        # path_to_wav = Path(conf['exp_dir']) / Path('test_wav')
+        # path_to_wav.mkdir(parents=True,exist_ok=True)
         
-        est_sources = model(mix[None, None])
-        
-        # loss, reordered_sources = loss_func(est_sources, sources[None], return_est=True)
-        loss, reordered_cov = loss_func(est_sources, sources, return_est=True)
-        mixtures = _targets.sum(dim=1, keepdim=True)
-        
-        inv_sum_cov_est_targets = torch.linalg.inv(cov_est_targets.sum(dim=1, keepdim=True))
-        filters = torch.einsum('...ij,...jk->...ik', cov_est_targets, inv_sum_cov_est_targets)
-        estimates = torch.einsum('...ij,...j->...i', filters, mixtures)
-        
-        
-        mix_np = mix[None].cpu().data.numpy()
-        sources_np = sources.cpu().data.numpy()
-        est_sources_np = reordered_sources.squeeze(0).cpu().data.numpy()
+        # sf.write(str(path_to_wav / Path(f"sample_{idx}_est.wav")), _est_sources.T, conf['sample_rate'])
+        # sf.write(str(path_to_wav / Path(f"sample_{idx}_tgt.wav")), _sources.T, conf['sample_rate'])
+        # sf.write(str(path_to_wav / Path(f"sample_{idx}_mix.wav")), _mix, conf['sample_rate'])
+                
+        est_sources_np = est_sources.cpu().data.numpy()      # KxN
+        L = est_sources.shape[-1]
+        sources_np = padded_src.cpu().data.numpy()[:,:L]     # KxN
+        mix_np = padded_mix[None,:].cpu().data.numpy()[:,:L] # KxN
         utt_metrics = get_metrics(
             mix_np,
             sources_np,
@@ -186,5 +261,8 @@ if __name__ == "__main__":
             "Warning : the task used to test is different than "
             "the one from training, be sure this is what you want."
         )
-
+    
+    print('ATTENTION: TESTING ON VALIDATION SET')
+    arg_dic["test_dir"] = arg_dic['train_conf']['data']['valid_dir']
+    print(arg_dic["test_dir"])
     main(arg_dic)

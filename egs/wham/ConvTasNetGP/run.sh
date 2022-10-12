@@ -42,6 +42,9 @@ epochs=200
 # Architecture
 model_name=GPTasNet
 model=gptasnet
+k_n_layers=3
+k_hid_size=128
+k_out_size=64
 
 # Evaluation
 eval_use_gpu=1
@@ -97,6 +100,9 @@ if [[ $stage -le 3 ]]; then
 		--sample_rate $sample_rate \
 		--epochs $epochs \
 		--num_workers $num_workers \
+		--k_hid_size $k_hid_size   \
+		--k_n_layers $k_n_layers   \
+		--k_out_size $k_out_size   \
 		--exp_dir ${expdir}/ | tee logs/train_${tag}.log
 	cp logs/train_${tag}.log $expdir/train.log
 
@@ -111,6 +117,7 @@ if [[ $stage -le 4 ]]; then
 		--task $task \
 		--test_dir $test_dir \
 		--use_gpu $eval_use_gpu \
+		--n_save_ex 10 \
 		--exp_dir ${expdir} | tee logs/eval_${tag}.log
 	cp logs/eval_${tag}.log $expdir/eval.log
 fi

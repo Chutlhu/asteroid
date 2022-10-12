@@ -24,7 +24,9 @@ from asteroid.models.conv_tasnet import GPTasNet
 # will limit the number of available GPUs for train.py .
 parser = argparse.ArgumentParser()
 parser.add_argument("--exp_dir", default="exp/tmp", help="Full path to save best validation model")
-
+# parser.add_argument("--k_n_layers", default=1, help="Num of hidden layers in the kernel network")
+# parser.add_argument("--k_hid_size", default=64, help="Num of neurons in each hidden layer in the kernel network")
+# parser.add_argument("--k_out_size", default=32, help="Size of the latent variable, output of the kernel network")
 
 def main(conf):
     train_set = WhamDataset(
@@ -60,10 +62,12 @@ def main(conf):
     )
     # Update number of source values (It depends on the task)
     conf["masknet"].update({"n_src": train_set.n_src})
-
+    conf["kernelnet"].update({"k_n_layers": train_set.n_src})
+    
     # Define model and optimizer
     model = GPTasNet(
-        **conf["filterbank"], **conf["masknet"], sample_rate=conf["data"]["sample_rate"],
+        **conf['kernelnet'], **conf["filterbank"], **conf["masknet"],
+        sample_rate=conf["data"]["sample_rate"],
     )
     optimizer = make_optimizer(model.parameters(), **conf["optim"])
     # Define scheduler
@@ -99,7 +103,7 @@ def main(conf):
     callbacks = []
     checkpoint_dir = os.path.join(exp_dir, "checkpoints/")
     checkpoint = ModelCheckpoint(
-        checkpoint_dir, monitor="val_loss", mode="min", save_top_k=5, verbose=True
+        checkpoint_dir, monitor="val_loss", mode="min", save_top_k=5, verbose=True, save_last=True,
     )
     callbacks.append(checkpoint)
     if conf["training"]["early_stop"]:
@@ -112,9 +116,11 @@ def main(conf):
         accelerator="gpu" if torch.cuda.is_available() else "cpu",
         strategy="ddp",
         devices="auto",
-        limit_train_batches=1.0,  # Useful for fast experiment
         gradient_clip_val=5.0,
     )
+    # limit_train_batches=conf["training"]["train_limit"],  # Useful for fast experiment
+    # limit_val_batches=conf["training"]["val_limit"],  # Useful for fast experiment
+    loss_func.loss_func.trainer = trainer
     trainer.fit(system)
 
     best_k = {k: v.item() for k, v in checkpoint.best_k_models.items()}
@@ -148,5 +154,4 @@ if __name__ == "__main__":
     # the attributes in an non-hierarchical structure. It can be useful to also
     # have it so we included it here but it is not used.
     arg_dic, plain_args = parse_args_as_dict(parser, return_plain_args=True)
-    pprint(arg_dic)
     main(arg_dic)
