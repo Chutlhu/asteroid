@@ -11,7 +11,7 @@ from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
 from asteroid.data.wham_dataset import WhamDataset
 from asteroid.engine.optimizers import make_optimizer
 from asteroid.engine.system import System
-from asteroid.losses import PITLossWrapper, PairwiseLogDetDiv, pairwise_neg_sisdr
+from asteroid.losses import PITLossWrapper, PairwiseLogDetDiv, pairwise_neg_sisdr, PairwiseLogDetDivRank1
 from asteroid.losses.gploss import GPLoss
 from asteroid.models import ConvTasNet
 from asteroid.models.conv_tasnet import GPTasNet
@@ -62,7 +62,6 @@ def main(conf):
     )
     # Update number of source values (It depends on the task)
     conf["masknet"].update({"n_src": train_set.n_src})
-    conf["kernelnet"].update({"k_n_layers": train_set.n_src})
     
     # Define model and optimizer
     model = GPTasNet(
@@ -82,13 +81,23 @@ def main(conf):
         yaml.safe_dump(conf, outfile)
 
     # Define Loss function.
+    pad_to_remove = model.half_pad_to_remove*2 + conf["filterbank"]["kernel_size"]
     # loss_func = PITLossWrapper(pairwise_neg_sisdr, pit_from="pw_mtx")
     loss_func = PITLossWrapper(
         PairwiseLogDetDiv(
-            inv_est=True, exp_dir=conf["main_args"]["exp_dir"],
-            padding_to_remove=conf["filterbank"]["kernel_size"]),
+            inv_est=True, 
+            exp_dir=conf["main_args"]["exp_dir"],
+            padding_to_remove=pad_to_remove),
         pit_from="pw_mtx")
-   
+    
+    loss_func.loss_func.loss_terms = conf['training']['loss'].split('+') # ['nll', 'mask', 'znorm', 'ld_mix', 'ld_src']
+    if 'vae' in loss_func.loss_func.loss_terms:
+        model.mode = 'vae'
+    else:
+        model.mode = 'krl'
+        
+    model.halfpadd = conf["filterbank"]["kernel_size"] // 2
+    
     system = System(
         model=model,
         loss_func=loss_func,
@@ -103,12 +112,11 @@ def main(conf):
     callbacks = []
     checkpoint_dir = os.path.join(exp_dir, "checkpoints/")
     checkpoint = ModelCheckpoint(
-        checkpoint_dir, monitor="val_loss", mode="min", save_top_k=5, verbose=True, save_last=True,
+        checkpoint_dir, monitor="val_loss", mode="min", save_last=True, save_top_k=10, every_n_epochs=25, verbose=True
     )
     callbacks.append(checkpoint)
     if conf["training"]["early_stop"]:
         callbacks.append(EarlyStopping(monitor="val_loss", mode="min", patience=30, verbose=True))
-
     trainer = pl.Trainer(
         max_epochs=conf["training"]["epochs"],
         callbacks=callbacks,
@@ -116,24 +124,46 @@ def main(conf):
         accelerator="gpu" if torch.cuda.is_available() else "cpu",
         strategy="ddp",
         devices="auto",
-        gradient_clip_val=5.0,
+        gradient_clip_val=1.0,
+        # limit_train_batches=conf["training"]["train_limit"],  # Useful for fast experiment
+        # limit_val_batches=conf["training"]["val_limit"],  # Useful for fast experiment
     )
-    # limit_train_batches=conf["training"]["train_limit"],  # Useful for fast experiment
-    # limit_val_batches=conf["training"]["val_limit"],  # Useful for fast experiment
     loss_func.loss_func.trainer = trainer
+    loss_func.loss_func.nll.trainer = trainer
+    model.trainer = trainer
+    model.loss = loss_func.loss_func
+    
     trainer.fit(system)
 
     best_k = {k: v.item() for k, v in checkpoint.best_k_models.items()}
     with open(os.path.join(exp_dir, "best_k_models.json"), "w") as f:
         json.dump(best_k, f, indent=0)
 
+    ''' Save best model '''
     state_dict = torch.load(checkpoint.best_model_path)
     system.load_state_dict(state_dict=state_dict["state_dict"])
     system.cpu()
-
     to_save = system.model.serialize()
     to_save.update(train_set.get_infos())
     torch.save(to_save, os.path.join(exp_dir, "best_model.pth"))
+
+    ''' Save all the checkpoinst '''
+    for model_path in [*checkpoint.best_k_models.keys(), checkpoint.last_model_path]:
+        state_dict = torch.load(model_path)
+        system.load_state_dict(state_dict=state_dict["state_dict"])
+        system.cpu()
+        to_save = system.model.serialize()
+        to_save.update(train_set.get_infos())
+        torch.save(to_save, model_path.replace(".ckpt", ".pth"))
+
+    ''' Save last model '''
+    state_dict = torch.load(checkpoint.last_model_path)
+    system.load_state_dict(state_dict=state_dict["state_dict"])
+    system.cpu()
+    to_save = system.model.serialize()
+    to_save.update(train_set.get_infos())
+    torch.save(to_save, os.path.join(exp_dir, "last_model.pth"))
+    
 
 
 if __name__ == "__main__":
@@ -154,4 +184,5 @@ if __name__ == "__main__":
     # the attributes in an non-hierarchical structure. It can be useful to also
     # have it so we included it here but it is not used.
     arg_dic, plain_args = parse_args_as_dict(parser, return_plain_args=True)
+    pprint(arg_dic)
     main(arg_dic)

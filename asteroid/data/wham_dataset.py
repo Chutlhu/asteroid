@@ -14,6 +14,7 @@ enh_both = {"mixture": "mix_both", "sources": ["mix_clean"], "infos": ["noise"],
 sep_clean = {"mixture": "mix_clean", "sources": ["s1", "s2"], "infos": [], "default_nsrc": 2}
 sep_noisy = {"mixture": "mix_both", "sources": ["s1", "s2"], "infos": ["noise"], "default_nsrc": 2}
 sep_noise = {"mixture": "mix_single", "sources": ["s1", "noise"], "infos": [], "default_nsrc": 2}
+sep_noisy_noise = {"mixture": "mix_both", "sources": ["s1", "s2", "noise"], "infos": [], "default_nsrc": 3}
 
 WHAM_TASKS = {
     "enhance_single": enh_single,
@@ -21,6 +22,7 @@ WHAM_TASKS = {
     "sep_clean": sep_clean,
     "sep_noisy": sep_noisy,
     "sep_noise": sep_noise,
+    "sep_noisy_noise": sep_noisy_noise,
 }
 # Aliases.
 WHAM_TASKS["enh_single"] = WHAM_TASKS["enhance_single"]

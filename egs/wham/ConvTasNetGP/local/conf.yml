@@ -10,25 +10,26 @@ masknet:
   mask_act: tanh
   bn_chan: 128
   skip_chan: 128
-  hid_chan: 256
+  hid_chan: 512
 kernelnet:
-  k_n_layers: 3
-  k_hid_size: 128
-  k_out_size: 32
+  k_n_layers: 0
+  k_hid_size: 256
+  k_out_size: 128
 # Training config
 training:
+  loss: ld_src+ld_mix
   epochs: 200
-  batch_size: 12
-  num_workers: 8
+  batch_size: 10
+  num_workers: 4
   half_lr: yes
   early_stop: no
-  train_limit: 0.01
-  val_limit: 0.01
+  train_limit: 1
+  val_limit: 1
 # Optim config
 optim:
   optimizer: adam
   lr: 0.0001
-  weight_decay: 0.
+  weight_decay: 0
 # Data config
 data:
   train_dir: data/wav8k/min200/tr/

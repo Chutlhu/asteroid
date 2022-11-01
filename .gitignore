@@ -120,6 +120,10 @@ venv.bak/
 
 
 *.wav
+*.png
+*.ckpt
+*.pth
 egs/wham/ConvTasNetGP/data/
+egs/wham/ConvTasNetGP/relevant_exp/
 egs/tools/
 pytorch-receptive-field

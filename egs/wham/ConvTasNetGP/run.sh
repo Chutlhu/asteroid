@@ -18,6 +18,7 @@ wham_wav_dir=/home/dicarlod/Documents/Code/asteoid/egs/wham/ConvTasNetGP/data/wh
 
 # Path to the python you'll use for the experiment. Defaults to the current python
 # You can run ./utils/prepare_python_env.sh to create a suitable python environment, paste the output here.
+source /home/dicarlod/Documents/Code/asteoid/venv/bin/activate
 python_path=python
 
 # Example usage
@@ -30,21 +31,24 @@ tag=""  # Controls the directory name associated to the experiment
 id=0
 
 # Data
-task=sep_noise  # Specify the task here (sep_clean, sep_noisy, enh_single, enh_both)
+task=sep_noisy_noise  # Specify the task here (sep_clean, sep_noisy, enh_single, enh_both)
 sample_rate=8000
-mode=min
+mode=min20pct
 nondefault_src=  # If you want to train a network with 3 output streams for example.
 
 # Training
 num_workers=8
 epochs=200
+loss=ld_mix+ld_src+kl
 
 # Architecture
 model_name=GPTasNet
 model=gptasnet
-k_n_layers=3
+n_blocks=8
+n_repeats=3
+k_n_layers=7
 k_hid_size=128
-k_out_size=64
+k_out_size=128
 
 # Evaluation
 eval_use_gpu=1
@@ -56,7 +60,7 @@ suffix=wav${sr_string}k/$mode
 dumpdir=data/$suffix  # directory to put generated json file
 
 train_dir=$dumpdir/tr
-valid_dir=$dumpdir/cv
+valid_dir=$dumpdir/tr
 test_dir=$dumpdir/tt
 
 if [[ $stage -le  0 ]]; then
@@ -92,6 +96,8 @@ expdir=exp/train_${model}_${tag}
 mkdir -p $expdir && echo $uuid >> $expdir/run_uuid.txt
 echo "Results from the following experiment will be stored in $expdir"
 
+mkdir -p ${expdir}/figures
+
 if [[ $stage -le 3 ]]; then
   echo "Stage 3: Training"
   mkdir -p logs
@@ -99,10 +105,15 @@ if [[ $stage -le 3 ]]; then
 		--task $task \
 		--sample_rate $sample_rate \
 		--epochs $epochs \
+		--train_dir $train_dir \
+		--valid_dir $valid_dir \
 		--num_workers $num_workers \
 		--k_hid_size $k_hid_size   \
 		--k_n_layers $k_n_layers   \
 		--k_out_size $k_out_size   \
+		--n_blocks $n_blocks	   \
+		--n_repeats $n_repeats     \
+		--loss $loss			   \
 		--exp_dir ${expdir}/ | tee logs/train_${tag}.log
 	cp logs/train_${tag}.log $expdir/train.log
 
@@ -118,6 +129,7 @@ if [[ $stage -le 4 ]]; then
 		--test_dir $test_dir \
 		--use_gpu $eval_use_gpu \
 		--n_save_ex 10 \
+		--model last
 		--exp_dir ${expdir} | tee logs/eval_${tag}.log
 	cp logs/eval_${tag}.log $expdir/eval.log
 fi

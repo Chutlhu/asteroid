@@ -39,7 +39,7 @@ nondefault_src=  # If you want to train a network with 3 output streams for exam
 batch_size=8
 num_workers=8
 #optimizer=adam
-lr=0.001
+lr=0.0001
 epochs=200
 
 # Architecture
