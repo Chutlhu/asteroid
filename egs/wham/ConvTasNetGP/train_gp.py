@@ -12,8 +12,6 @@ from asteroid.data.wham_dataset import WhamDataset
 from asteroid.engine.optimizers import make_optimizer
 from asteroid.engine.system import System
 from asteroid.losses import PITLossWrapper, PairwiseLogDetDiv, pairwise_neg_sisdr, PairwiseLogDetDivRank1
-from asteroid.losses.gploss import GPLoss
-from asteroid.models import ConvTasNet
 from asteroid.models.conv_tasnet import GPTasNet
 
 # Keys which are not in the conf.yml file can be added here.
@@ -65,7 +63,9 @@ def main(conf):
     
     # Define model and optimizer
     model = GPTasNet(
-        **conf['kernelnet'], **conf["filterbank"], **conf["masknet"],
+        **conf["kernelnet"], 
+        **conf["filterbank"],
+        **conf["masknet"],
         sample_rate=conf["data"]["sample_rate"],
     )
     optimizer = make_optimizer(model.parameters(), **conf["optim"])

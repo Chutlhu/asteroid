@@ -22,5 +22,5 @@ if [[ ! -z ${pip_requires} ]]; then
 fi
 $pip_path install soundfile
 $pip_path install -e $asteroid_root
-#$pip_path install ${asteroid_root}/\[""evaluate""\]
+
 echo -e "\nAsteroid has been installed in editable mode. Feel free to apply your changes !"

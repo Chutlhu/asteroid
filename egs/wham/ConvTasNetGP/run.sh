@@ -18,7 +18,7 @@ wham_wav_dir=/home/dicarlod/Documents/Code/asteoid/egs/wham/ConvTasNetGP/data/wh
 
 # Path to the python you'll use for the experiment. Defaults to the current python
 # You can run ./utils/prepare_python_env.sh to create a suitable python environment, paste the output here.
-source /home/dicarlod/Documents/Code/asteoid/venv/bin/activate
+# source /home/dicarlod/Documents/Code/asteoid/venv/bin/activate
 python_path=python
 
 # Example usage

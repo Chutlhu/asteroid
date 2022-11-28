@@ -8,15 +8,15 @@ loss=ld_src
 
 for mode in min01pct
 do 
-    for k_n_layers in 3
+    for k_n_layers in 5
     do 
         for k_hid_size in 64
         do
-            for k_out_size in 16
+            for k_out_size in 64
             do
                 # for loss in nll+znorm ld_mix+ld_src+nll+znorm+mask ld_mix+ld_src+znorm
-                for loss in nll+vae+kl
-                # for loss in nll+znorm
+                # for loss in nll+vae+k
+                for loss in nll+znorm
                 do
 
                     tag=${mode}_n-${k_n_layers}_h-${k_hid_size}_o-${k_out_size}_${loss}_b${B}r${R}${suffix}
